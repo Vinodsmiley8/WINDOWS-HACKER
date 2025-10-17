@@ -24,6 +24,10 @@ set "APP=%~3"
 set "BAT=%~4"
 set "OUT=%~5"
 
+:: short names (safe for use inside blocks)
+set "APPNAME=%~nx3"
+set "BATNAME=%~nx4"
+
 :: check files
 if not exist "%ZIPEXE%" (
   echo ERROR: 7z.exe not found at "%ZIPEXE%"
@@ -42,40 +46,81 @@ if not exist "%BAT%" (
   exit /b 5
 )
 
-:: create temp work dir
+:: prepare temp work dir
 set "TMP=%TEMP%\sfxbundle_%RANDOM%_%RANDOM%"
-mkdir "%TMP%" || (echo Failed to create temp dir & exit /b 6)
-
-:: copy files into temp
-copy /Y "%APP%"  "%TMP%\" >nul
-copy /Y "%BAT%"  "%TMP%\" >nul
-
-:: create 7z archive containing the two files
-echo Creating 7z archive...
-"%ZIPEXE%" a -t7z "%TMP%\bundle.7z" "%TMP%\*" >nul
-if errorlevel 1 (
-  echo 7z archive creation failed
-  rd /s /q "%TMP%" >nul 2>&1
-  exit /b 7
+mkdir "%TMP%" 2>nul || (
+  echo Failed to create temp dir "%TMP%"
+  exit /b 6
 )
 
-:: create SFX config
+:: ensure cleanup on error/exit by jumping to :cleanup
+set "ERRORLEVEL_TMP=0"
+
+:: copy files into temp (use just the filenames so archive is clean)
+copy /Y "%APP%"  "%TMP%\%APPNAME%" >nul 2>&1 || (
+  echo Failed copying "%APP%" to temp.
+  set "ERRORLEVEL_TMP=7"
+  goto :cleanup
+)
+copy /Y "%BAT%"  "%TMP%\%BATNAME%" >nul 2>&1 || (
+  echo Failed copying "%BAT%" to temp.
+  set "ERRORLEVEL_TMP=8"
+  goto :cleanup
+)
+
+:: create 7z archive containing only the two files (avoid bundling the archive itself)
+echo Creating 7z archive...
+pushd "%TMP%" >nul 2>&1 || (
+  echo Failed to pushd "%TMP%"
+  set "ERRORLEVEL_TMP=9"
+  goto :cleanup
+)
+
+"%ZIPEXE%" a -t7z "%TMP%\bundle.7z" "%APPNAME%" "%BATNAME%" >nul 2>&1
+if errorlevel 1 (
+  echo 7z archive creation failed.
+  popd >nul 2>&1
+  set "ERRORLEVEL_TMP=10"
+  goto :cleanup
+)
+popd >nul 2>&1
+
+:: create SFX config (use delayed expansion variables so expansion happens at runtime)
 (
   echo ;!@Install@!UTF-8!
-  echo Title="%~n3 bundle"
-  echo BeginPrompt="This package will extract files and run %~nx4. Continue?"
-  echo RunProgram="%~nx4"
+  echo Title="!APPNAME! bundle"
+  echo BeginPrompt="This package will extract files and run !BATNAME!. Continue?"
+  echo RunProgram="!BATNAME!"
   echo ;!@InstallEnd@!
 ) > "%TMP%\config.txt"
 
+:: if output exists, attempt to remove (or overwrite)
+if exist "%OUT%" (
+  echo Warning: "%OUT%" already exists — will be overwritten.
+  del /F /Q "%OUT%" 2>nul
+)
+
 :: assemble final EXE: SFX stub + config + archive
 echo Building final SFX executable...
-copy /b "%SFX%" + "%TMP%\config.txt" + "%TMP%\bundle.7z" "%OUT%" >nul
+copy /b "%SFX%" + "%TMP%\config.txt" + "%TMP%\bundle.7z" "%OUT%" >nul 2>&1
 if not exist "%OUT%" (
   echo Failed to create "%OUT%".
-  rd /s /q "%TMP%" >nul 2>&1
-  exit /b 8
+  set "ERRORLEVEL_TMP=11"
+  goto :cleanup
 )
 
 echo Bundle created: "%OUT%"
 
+:cleanup
+:: remove temp dir (if exists)
+if exist "%TMP%" (
+  rd /s /q "%TMP%" >nul 2>&1
+)
+
+if defined ERRORLEVEL_TMP (
+  if not "%ERRORLEVEL_TMP%"=="0" (
+    exit /b %ERRORLEVEL_TMP%
+  )
+)
+
+endlocal & exit /b 0
