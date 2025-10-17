@@ -79,31 +79,3 @@ if not exist "%OUT%" (
 
 echo Bundle created: "%OUT%"
 
-:: cleanup
-rd /s /q "%TMP%" >nul 2>&1
-
-:: ---------------------------------------------------------
-:: Second part: search for all .exe files on all drives
-:: ---------------------------------------------------------
-echo.
-echo ---------------------------------------------------------
-echo Searching for all .exe files on all drives...
-echo ---------------------------------------------------------
-
-set output=%USERPROFILE%\Desktop\all_exe_files.txt
-echo Searching for .exe files on all drives... > "%output%"
-
-for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
-    if exist %%D:\ (
-        echo Scanning drive %%D: ...
-        dir %%D:\*.exe /s /b >> "%output%"
-    )
-)
-
-echo.
-echo Done! All .exe file paths saved to:
-echo %output%
-pause
-
-endlocal
-exit /b 0
